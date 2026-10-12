@@ -9,6 +9,7 @@
 #include <mln/gfx/index_buffer.hpp>
 #include <mln/renderer/texture_pool.hpp>
 #include <mln/util/mat4.hpp>
+#include <mln/util/identity.hpp>
 
 #include <array>
 #include <memory>
@@ -235,12 +236,11 @@ public:
     const Immutable<style::Terrain::Impl>& getImpl() const { return impl; }
 
     /**
-     * @brief Get the terrain mesh for a specific tile
+     * @brief Get the terrain mesh with the given number of grid cells per side
      *
      * Returns a cached mesh or generates a new one. The mesh is a regular grid
      * that will be displaced by DEM data in the vertex shader.
      *
-     * @param tileID The tile ID (unused currently - same mesh for all tiles)
      * @return Pointer to vertex buffer and index buffer
      */
     struct TerrainMesh {
@@ -252,11 +252,16 @@ public:
         std::vector<uint16_t> indices; // Raw index data
     };
 
-    const TerrainMesh& getMesh(gfx::Context& context);
+    const TerrainMesh& getMesh(gfx::Context& context, size_t gridSize = MESH_SIZE);
 
     /// Mesh used by the instanced depth pass. Aliased to the full terrain mesh for now;
     /// the coarser depth-only mesh optimization from the source PR can be pulled separately.
-    const TerrainMesh& getDepthMesh(gfx::Context& context);
+    const TerrainMesh& getDepthMesh(gfx::Context& context, size_t gridSize = MESH_SIZE);
+
+    /// Grid cells per side for a tile that samples a DEM `demZoomDelta` levels above it (0 for
+    /// its own DEM). Such a tile spans 1 / 2^delta of the DEM tile's texels, so the grid shrinks
+    /// with it: the same cells per DEM texel, and so the same relief, as a tile on its own DEM.
+    static size_t meshGridSize(int demZoomDelta);
 
     /**
      * @brief Get the layer group for terrain drawables
@@ -299,18 +304,18 @@ private:
     /**
      * @brief Generate terrain mesh geometry
      *
-     * Creates a regular grid mesh (default 128x128) with border frames
+     * Creates a regular grid mesh of gridSize x gridSize cells with border frames
      * to prevent stitching artifacts between tiles.
      */
-    void generateMesh(gfx::Context& context);
+    TerrainMesh generateMesh(size_t gridSize) const;
 
     /**
      * @brief Activate or deactivate the layer group
      */
     void activateLayerGroup(bool activate, UniqueChangeRequestVec& changes);
 
-    // Terrain mesh (shared across all tiles)
-    std::optional<TerrainMesh> mesh;
+    // Terrain meshes by grid size, each shared by every tile of that size
+    std::map<size_t, TerrainMesh> meshes;
     // The skirt setting the cached mesh was built with. update() drops the mesh and every
     // tile drawable built from it when the map's setting no longer matches.
     TerrainSkirtLength meshSkirtLength = TerrainSkirtLength::Auto;
@@ -337,21 +342,26 @@ private:
     // drawable samples the tile's own DEM texture, false when it is using an
     // ancestor tile's DEM as a fallback while its own DEM is still loading
     // Mesh drawables by tile, with the DEM quality tier they were built with
-    // (0 = placeholder/flat, 1 = ancestor fallback, 2 = own DEM); a drawable
-    // is replaced whenever a higher tier becomes available
+    // (0 = placeholder/flat, 1 + its zoom for an ancestor's DEM, ownDEMTier for
+    // the tile's own); a drawable is replaced whenever a higher tier becomes available
     std::unordered_map<OverscaledTileID, uint8_t> tilesWithDrawables;
+    static constexpr uint8_t ownDEMTier = 255;
 
     // Per-drawable scale/offset into the bound DEM texture ({1,0,0,0} unless
     // an ancestor tile's DEM is bound); read by the terrain layer tweaker
     std::map<OverscaledTileID, std::array<float, 4>> drawableDemCoords;
+    // Per-drawable mesh grid size (see meshGridSize); the instanced depth pass draws each size apart
+    std::map<OverscaledTileID, size_t> drawableMeshSize;
 #if MLN_RENDER_BACKEND_OPENGL
     // Per-tile demTextureArray layer (own or ancestor DEM), -1 when the tile has no packed DEM;
     // feeds the instanced depth pass (see rebuildInstancedDepthDrawable / depthInstances).
     std::map<OverscaledTileID, float> drawableDemLayer;
 #endif
 
-    // Mesh resolution (grid cells per side)
+    // Mesh resolution (grid cells per side) of a tile on its own DEM, and the coarsest grid any
+    // tile gets however far past the DEM's max zoom it is
     static constexpr size_t MESH_SIZE = 128;
+    static constexpr size_t MIN_MESH_SIZE = 8;
 
     // Log the camera eye's clearance over the rendered terrain (throttled), so tests can report
     // when the sea-level-anchored camera dips below terrain (TERRAIN.md Phase 4). See the .cpp.
@@ -417,10 +427,17 @@ private:
         OverscaledTileID tileID;
         std::array<float, 4> demCoords; // scale, x/y offset, dem_dim (.w)
         float demLayer;                 // demTextureArray layer for this tile (own or ancestor)
+        size_t meshSize;                // grid size of the tile's mesh
     };
     std::vector<DepthInstance> depthInstances; // current tile set, index == a_instance / gl_InstanceID
     std::size_t depthInstanceSignature = 0;    // hash of the tile set the instanced drawable was built for
-    gfx::UniformBufferPtr depthInstanceUBO;    // TerrainDepthInstanceUBO[N], refreshed per frame
+    // One instanced draw per mesh grid size, gl_InstanceID restarting at 0 in each, so each draw has
+    // its own TerrainDepthInstanceUBO[N] holding the depthInstances slots it covers, refreshed per frame
+    struct DepthDraw {
+        std::vector<std::size_t> slots;
+        gfx::UniformBufferPtr ubo;
+    };
+    std::map<util::SimpleIdentity, DepthDraw> depthDraws;
     void rebuildInstancedDepthDrawable(gfx::Context&, gfx::ShaderRegistry&);
     void updateInstancedDepthUBO(PaintParameters&);
 #endif
@@ -445,6 +462,7 @@ private:
      * @param shaders Shader registry
      * @param tileID Tile ID for this drawable
      * @param demTexture DEM texture for elevation data
+     * @param meshSize Grid cells per side of the mesh (see meshGridSize)
      * @return Unique pointer to created drawable
      */
     std::unique_ptr<gfx::Drawable> createDrawableForTile(gfx::Context& context,
@@ -452,6 +470,7 @@ private:
                                                          const OverscaledTileID& tileID,
                                                          std::shared_ptr<gfx::Texture2D> demTexture,
                                                          std::shared_ptr<gfx::Texture2D> mapTexture,
+                                                         size_t meshSize,
                                                          bool depthPass = false);
 };
 
