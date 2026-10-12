@@ -141,6 +141,9 @@ public:
      */
     float getElevation(const UnwrappedTileID& tileID, float x, float y) const;
 
+    /// As getElevation, but empty when no DEM covers the coordinate.
+    std::optional<float> queryElevation(const UnwrappedTileID& tileID, float x, float y) const;
+
     /**
      * @brief Get elevation with exaggeration applied
      * @param tileID The tile containing the coordinate
@@ -161,6 +164,10 @@ public:
      * @return height in metres of the rendered surface, or 0 when no DEM covers it
      */
     double getElevationForLatLng(const LatLng& latLng) const;
+
+    /// As getElevationForLatLng, but empty when no DEM covers the position yet, so a caller
+    /// can tell sea level from not knowing.
+    std::optional<double> queryElevationForLatLng(const LatLng& latLng) const;
 
     /**
      * @brief Get the terrain exaggeration multiplier

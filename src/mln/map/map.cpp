@@ -614,6 +614,7 @@ TerrainSkirtLength Map::getTerrainSkirtLength() const {
 
 void Map::setCenterClampedToGround(bool clamped) {
     impl->centerClampedToGround = clamped;
+    impl->onUpdate();
 }
 
 bool Map::getCenterClampedToGround() const {

@@ -11,6 +11,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <mln/tile/tile_id.hpp>
 
@@ -44,6 +45,10 @@ private:
     void setObserver(RendererObserver*);
 
     void render(const RenderTree&, const std::shared_ptr<UpdateParameters>&);
+
+    /// The frame's parameters with the centre lifted onto the terrain under it, when the map
+    /// clamps its centre to the ground; the parameters as given otherwise.
+    std::shared_ptr<UpdateParameters> withCenterOnGround(const std::shared_ptr<UpdateParameters>&);
 
     void reduceMemoryUse();
 
@@ -105,9 +110,12 @@ private:
     // point the DEM source is resolved) a bounded number of times so a genuinely empty
     // cover cannot spin forever.
     int terrainCoverRetryFrames = 4;
-    /// Last terrain height reported under the map centre, so an unchanged surface does not
-    /// post an observer message every frame.
-    double lastReportedCenterElevation = 0.0;
+    /// Terrain height under the map centre the last time the DEM there was known, held while
+    /// the DEM under a new centre loads (see withCenterOnGround).
+    std::optional<double> lastCenterGround;
+    /// How far above the ground under it the eye is kept: below this the near plane would cut
+    /// into the slope the view starts on.
+    static constexpr double minimumEyeClearanceMeters = 100.0;
 
     enum class RenderState {
         Never,

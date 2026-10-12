@@ -28,7 +28,9 @@ public:
     const float pixelRatio;
     const MapDebugOptions debugOptions;
     const TimePoint timePoint;
-    const TransformState transformState;
+    // Not const: the renderer lifts the centre onto the terrain in its copy of these parameters
+    // before the frame reads the camera (see centerClampedToGround).
+    TransformState transformState;
 
     const std::string glyphURL;
     std::shared_ptr<FontFaces> fontFaces;
@@ -63,6 +65,9 @@ public:
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely
     // when off, so it has no cost unless explicitly enabled (Map::setDebugAboveGroundLog).
     bool debugAboveGroundLog = false;
+    // Whether the renderer sets the centre altitude to the terrain height under the centre for the
+    // frame it draws (Map::setCenterClampedToGround).
+    bool centerClampedToGround = false;
 };
 
 } // namespace mln

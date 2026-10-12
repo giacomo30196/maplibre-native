@@ -195,7 +195,14 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     const bool adaptiveLod = state.tileLodMode == TileLodMode::Adaptive;
     // GL JS puts the Mercator cover on the variable-zoom function whenever terrain is
     // present, not only past a pitch threshold, so selecting Adaptive is itself the opt-in.
-    const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
+    // Terrain (an elevation provider) lets coarser tiles in away from the centre at any pitch
+    // too: it shows far more ground than a flat map at the same pitch - from a pass, the
+    // valleys below and the ridges beyond - and a uniform cover of all of it ran to hundreds
+    // of tiles, each terrain one with a drape target. The terrain mesh, its DEM and the
+    // sources draped on it all get the same cover this way, so no mesh tile sits shallower
+    // than the DEM loaded for it.
+    const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold ||
+                                   state.elevationProvider != nullptr;
     const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
     const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
     const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? zoomRange.max : z;

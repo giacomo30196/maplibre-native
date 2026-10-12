@@ -63,7 +63,6 @@ public:
     void onDidFinishRenderingFrame(RenderMode, bool, bool, const gfx::RenderingStats&) final;
     void onWillStartRenderingMap() final;
     void onDidFinishRenderingMap() final;
-    void onTerrainCenterElevationChanged(double elevationMeters) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
     void onRegisterShaders(gfx::ShaderRegistry&) final;
@@ -118,10 +117,10 @@ public:
     TileLodMode tileLodMode = TileLodMode::Default;
     TerrainLoadMode terrainLoadMode = TerrainLoadMode::Quality;
     TerrainSkirtLength terrainSkirtLength = TerrainSkirtLength::Auto;
-    /// Off by default: the clamp jumps the camera asynchronously, including part-way
-    /// through a gesture, and browsing a terrain map with it on runs away rather than
-    /// pans. Opt in with Map::setCenterClampedToGround until it is applied during render
-    /// setup instead, the way GL JS's recalculateZoomAndCenter is.
+    /// Applied by the renderer to the frame it draws, the way GL JS sets transform.elevation in
+    /// its render step; this transform keeps the altitude the camera was given. Off by default:
+    /// with it on the camera rides up and down with the ground, which a free camera placed at
+    /// an exact eye position does not want.
     bool centerClampedToGround = false;
     bool debugAboveGroundLog = false;
 };

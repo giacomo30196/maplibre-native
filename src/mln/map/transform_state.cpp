@@ -788,13 +788,14 @@ TileCoordinate TransformState::screenCoordinateToTileCoordinate(const ScreenCoor
         return {.p = {}, .z = 0};
     }
 
-    float targetZ = 0;
+    // World z is in metres (Camera::getWorldToCamera), as is the ground altitude.
+    const double targetZ = groundAltitude;
 
     double flippedY = size.height - point.y;
 
     // since we don't know the correct projected z value for the point,
     // unproject two points to get a line and then find the point on that
-    // line with z=0
+    // line on the ground plane
 
     vec4 coord0;
     vec4 coord1;

@@ -33,9 +33,12 @@ void Renderer::setObserver(RendererObserver* observer) {
     impl->orchestrator.setObserver(observer);
 }
 
-void Renderer::render(const std::shared_ptr<UpdateParameters>& updateParameters) {
+void Renderer::render(const std::shared_ptr<UpdateParameters>& requestedParameters) {
     MLN_TRACE_FUNC();
-    assert(updateParameters);
+    assert(requestedParameters);
+    // Lift the centre onto the terrain before anything reads the camera, so the tile covers,
+    // matrices, placement and queries of this frame all see the one view it draws.
+    const auto updateParameters = impl->withCenterOnGround(requestedParameters);
 
     // Route the errors detected on the render thread to the renderer observer for the duration of the frame (see
     // `SymbolErrorObserver`).

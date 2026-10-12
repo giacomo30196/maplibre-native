@@ -170,6 +170,43 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     if (dilated.size() != out.size()) {
         out = util::frustumCull(coverParams, dilated);
     }
+
+    // Cap the mesh tile count: keep those nearest the map center, drop the farthest
+    // (the horizon tiles a high tilt pulls in). Everything downstream - drape
+    // targets, re-renders, depth draws - scales with this count. Capped here, in the cover
+    // the drape-target pool is also built from, so the pool never holds a target the mesh
+    // dropped: over a high pass the uncapped cover reached 237 tiles, nearly 1 GB of drape
+    // textures for a 64-tile mesh.
+    // Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps a generous cap so terrain
+    // render distance stays long; Balanced/Performance trade distance for frame time.
+    const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
+                                                 : 0;
+    if (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
+        // Map center in normalized web-mercator [0,1] (standard projection)
+        const LatLng center = state.getLatLng();
+        const double cx = center.longitude() / 360.0 + 0.5;
+        const double latRad = util::deg2rad(center.latitude());
+        const double cy = 0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI);
+
+        const auto tileDist2 = [&](const UnwrappedTileID& id) {
+            const double scale = static_cast<double>(1u << id.canonical.z);
+            const double tx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap;
+            const double ty = (static_cast<double>(id.canonical.y) + 0.5) / scale;
+            const double dx = tx - cx;
+            const double dy = ty - cy;
+            return dx * dx + dy * dy;
+        };
+
+        std::vector<UnwrappedTileID> sorted(out.begin(), out.end());
+        std::partial_sort(
+            sorted.begin(),
+            sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles),
+            sorted.end(),
+            [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return tileDist2(a) < tileDist2(b); });
+        out = std::set<UnwrappedTileID>(sorted.begin(),
+                                              sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles));
+    }
+
     return out;
 }
 
@@ -289,39 +326,6 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     std::set<UnwrappedTileID> meshTiles = frameMeshCover ? std::move(*frameMeshCover)
                                                          : computeMeshCover(state, updateParameters);
     frameMeshCover.reset();
-
-    // Cap the mesh tile count: keep those nearest the map center, drop the farthest
-    // (the horizon tiles a high tilt pulls in). Everything downstream - drape
-    // targets, re-renders, depth draws - scales with this count.
-    // Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps a generous cap so terrain
-    // render distance stays long; Balanced/Performance trade distance for frame time.
-    const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
-                                                 : 0;
-    if (maxMeshTiles > 0 && meshTiles.size() > maxMeshTiles) {
-        // Map center in normalized web-mercator [0,1] (standard projection)
-        const LatLng center = state.getLatLng();
-        const double cx = center.longitude() / 360.0 + 0.5;
-        const double latRad = util::deg2rad(center.latitude());
-        const double cy = 0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI);
-
-        const auto tileDist2 = [&](const UnwrappedTileID& id) {
-            const double scale = static_cast<double>(1u << id.canonical.z);
-            const double tx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap;
-            const double ty = (static_cast<double>(id.canonical.y) + 0.5) / scale;
-            const double dx = tx - cx;
-            const double dy = ty - cy;
-            return dx * dx + dy * dy;
-        };
-
-        std::vector<UnwrappedTileID> sorted(meshTiles.begin(), meshTiles.end());
-        std::partial_sort(
-            sorted.begin(),
-            sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles),
-            sorted.end(),
-            [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return tileDist2(a) < tileDist2(b); });
-        meshTiles = std::set<UnwrappedTileID>(sorted.begin(),
-                                              sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles));
-    }
 
     // Drop drawables and cached DEM textures for tiles that left the mesh tile
     // set, keeping everything else intact between frames
@@ -640,14 +644,18 @@ bool RenderTerrain::normalizeTileCoordinates(UnwrappedTileID& tileID, float& x, 
     return true;
 }
 
-float RenderTerrain::getElevation(const UnwrappedTileID& tileID_, float x, float y) const {
+float RenderTerrain::getElevation(const UnwrappedTileID& tileID, float x, float y) const {
+    return queryElevation(tileID, x, y).value_or(0.0f);
+}
+
+std::optional<float> RenderTerrain::queryElevation(const UnwrappedTileID& tileID_, float x, float y) const {
     if (!demSource) {
-        return 0.0f;
+        return std::nullopt;
     }
 
     UnwrappedTileID tileID = tileID_;
     if (!normalizeTileCoordinates(tileID, x, y)) {
-        return 0.0f;
+        return std::nullopt;
     }
 
     // Find the DEM tile matching the requested tile, or its closest available ancestor
@@ -663,21 +671,21 @@ float RenderTerrain::getElevation(const UnwrappedTileID& tileID_, float x, float
         }
     }
     if (!demRenderTile) {
-        return 0.0f;
+        return std::nullopt;
     }
 
     const auto& tile = demRenderTile->getTile();
     if (tile.kind != Tile::Kind::RasterDEM) {
-        return 0.0f;
+        return std::nullopt;
     }
     auto* demTile = const_cast<RasterDEMTile*>(static_cast<const RasterDEMTile*>(&tile));
     auto* bucket = demTile->getBucket();
     if (!bucket) {
-        return 0.0f;
+        return std::nullopt;
     }
     const auto& demData = bucket->getDEMData();
     if (!demData.getImagePtr() || demData.dim <= 0) {
-        return 0.0f;
+        return std::nullopt;
     }
 
     // Map the tile-local coordinate into the (possibly ancestor) DEM tile
@@ -708,8 +716,12 @@ float RenderTerrain::getElevationWithExaggeration(const UnwrappedTileID& tileID,
 }
 
 double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
+    return queryElevationForLatLng(latLng).value_or(0.0);
+}
+
+std::optional<double> RenderTerrain::queryElevationForLatLng(const LatLng& latLng) const {
     if (!demSource) {
-        return 0.0;
+        return std::nullopt;
     }
 
     // Sample as deep as the finest DEM tile loaded: getElevation walks up to the closest
@@ -722,7 +734,7 @@ double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
         }
     }
     if (sampleZoom < 0) {
-        return 0.0;
+        return std::nullopt;
     }
 
     const double n = std::pow(2.0, sampleZoom);
@@ -734,13 +746,17 @@ double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
     const auto tx = static_cast<int64_t>(std::floor(fx));
     const auto ty = static_cast<int64_t>(std::floor(fy));
     if (ty < 0 || static_cast<double>(ty) >= n) {
-        return 0.0; // past a pole
+        return std::nullopt; // past a pole
     }
 
     const UnwrappedTileID sampleTile(static_cast<uint8_t>(sampleZoom), tx, ty);
     const auto localX = static_cast<float>((fx - static_cast<double>(tx)) * util::EXTENT);
     const auto localY = static_cast<float>((fy - static_cast<double>(ty)) * util::EXTENT);
-    return getElevationWithExaggeration(sampleTile, localX, localY);
+    const auto elevation = queryElevation(sampleTile, localX, localY);
+    if (!elevation) {
+        return std::nullopt;
+    }
+    return static_cast<double>(*elevation) * getExaggeration();
 }
 
 std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const UnwrappedTileID& tileID) const {

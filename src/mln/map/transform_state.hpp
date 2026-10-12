@@ -163,6 +163,11 @@ public:
     // Position
     LatLng getLatLng(LatLng::WrapMode = LatLng::Unwrapped) const;
     double getCenterAltitude() const;
+    /// Altitude in metres of the ground that screen coordinates unproject onto: sea level,
+    /// unless a renderer lifted this state's centre onto terrain, which puts the ground around
+    /// the centre at that height (the plane the map's own, unlifted camera sees as z = 0).
+    double getGroundAltitude() const { return groundAltitude; }
+    void setGroundAltitude(double meters) { groundAltitude = meters; }
     double pixel_x() const;
     double pixel_y() const;
 
@@ -310,6 +315,7 @@ private:
 
     // map position
     double x = 0, y = 0, z = 0;
+    double groundAltitude = 0;
     double bearing = 0;
     double scale = 1;
     double fov = util::DEFAULT_FOV;

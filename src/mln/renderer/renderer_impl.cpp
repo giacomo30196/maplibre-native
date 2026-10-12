@@ -741,17 +741,6 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         terrainCoverRetryFrames = 4;
     }
 
-    // Report the rendered terrain height under the map centre. Only the render side has the
-    // DEM, so this is the channel; whether the camera acts on it is the map's call
-    // (Map::setCenterClampedToGround). Gated so a still map does not post a message a frame.
-    if (auto* terrain = orchestrator.getRenderTerrain()) {
-        const double centerElevation = terrain->getElevationForLatLng(updateParameters->transformState.getLatLng());
-        if (std::abs(centerElevation - lastReportedCenterElevation) > 0.25) {
-            lastReportedCenterElevation = centerElevation;
-            observer->onTerrainCenterElevationChanged(centerElevation);
-        }
-    }
-
     observer->onDidFinishRenderingFrame(
         renderTreeParameters.loaded ? RendererObserver::RenderMode::Full : RendererObserver::RenderMode::Partial,
         // Request a follow-up frame if the drape budget deferred any target or the tile-build
@@ -771,6 +760,49 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
 
     frameCount += 1;
     MLN_END_FRAME();
+}
+
+std::shared_ptr<UpdateParameters> Renderer::Impl::withCenterOnGround(
+    const std::shared_ptr<UpdateParameters>& parameters) {
+    auto* terrain = orchestrator.getRenderTerrain();
+    if (!parameters->centerClampedToGround || !parameters->terrain || !terrain || !terrain->isEnabled()) {
+        lastCenterGround.reset();
+        return parameters;
+    }
+    // The DEM is last frame's, which is as fresh as the render side has before this frame's
+    // sources update. Where the DEM under the centre is still loading, hold the last height
+    // rather than drop the camera to sea level and pop it back up when the tile lands.
+    const TransformState& state = parameters->transformState;
+    if (const auto ground = terrain->queryElevationForLatLng(state.getLatLng())) {
+        lastCenterGround = ground;
+    }
+    if (!lastCenterGround) {
+        return parameters;
+    }
+
+    // Lifting the centre lifts the whole orbit with it: the view keeps its zoom, pitch and
+    // bearing, and the plane the map's camera works on (z = its own altitude) is drawn at the
+    // ground's height, so a gesture still grabs the ground around the centre.
+    auto lifted = std::make_shared<UpdateParameters>(*parameters);
+    TransformState& liftedState = lifted->transformState;
+    liftedState.setCenterAltitude(*lastCenterGround);
+
+    // The eye can still be below the ground under it where the terrain behind rises faster
+    // than the view drops towards the centre - a steep slope at the rider's back. Raise the
+    // whole view until the eye clears it, as GL JS's _elevateCameraIfInsideTerrain does.
+    if (const auto eye = liftedState.getFreeCameraOptions().getLocation()) {
+        if (const auto groundUnderEye = terrain->queryElevationForLatLng(eye->location)) {
+            const double clearance = eye->altitude - *groundUnderEye;
+            if (clearance < minimumEyeClearanceMeters) {
+                liftedState.setCenterAltitude(*lastCenterGround + minimumEyeClearanceMeters - clearance);
+            }
+        }
+    }
+    // Screen points now unproject onto the lifted plane, not sea level kilometres below it:
+    // the tile covers centre their detail on what the view is centred on, and queries land
+    // where the map thread's (unlifted) camera puts them.
+    liftedState.setGroundAltitude(liftedState.getCenterAltitude());
+    return lifted;
 }
 
 void Renderer::Impl::reduceMemoryUse() {

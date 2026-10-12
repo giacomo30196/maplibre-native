@@ -223,10 +223,13 @@ public:
     void setTerrainSkirtLength(TerrainSkirtLength length);
     TerrainSkirtLength getTerrainSkirtLength() const;
 
-    /// Whether the map centre rides the terrain surface rather than sea level. With it on
-    /// (the default, as in maplibre-gl-js) the centre altitude follows the rendered terrain
-    /// height under the centre, so pitching over tall ground keeps the camera above it
-    /// instead of sinking in. Inert when terrain is not enabled.
+    /// Whether the map centre rides the terrain surface rather than sea level. With it on, each
+    /// frame is drawn with the centre altitude at the rendered terrain height under the centre
+    /// (as maplibre-gl-js does by default), so pitching over tall ground keeps the camera above
+    /// it instead of sinking in; the camera is also raised where the ground under the eye
+    /// itself would reach it. The map's own camera keeps the altitude it was given, so gestures
+    /// and animations are never interrupted. Off by default, since the eye then moves with the
+    /// ground; leave it off to place a free camera at an exact position. Inert without terrain.
     void setCenterClampedToGround(bool clamped);
     bool getCenterClampedToGround() const;
 
