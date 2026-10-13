@@ -113,9 +113,12 @@ private:
     /// Terrain height under the map centre the last time the DEM there was known, held while
     /// the DEM under a new centre loads (see withCenterOnGround).
     std::optional<double> lastCenterGround;
-    /// How far above the ground under it the eye is kept: below this the near plane would cut
-    /// into the slope the view starts on.
-    static constexpr double minimumEyeClearanceMeters = 100.0;
+    /// How far above the ground under it the eye is kept, as a share of its height above the
+    /// centre and within these bounds: closer, the near plane would cut into the slope the view
+    /// starts on.
+    static constexpr double eyeClearanceFraction = 0.1;
+    static constexpr double minimumEyeClearanceMeters = 5.0;
+    static constexpr double maximumEyeClearanceMeters = 100.0;
 
     enum class RenderState {
         Never,

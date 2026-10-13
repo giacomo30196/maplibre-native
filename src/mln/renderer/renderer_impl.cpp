@@ -33,6 +33,10 @@
 #include <mln/renderer/dem_elevation_provider.hpp>
 #include <mln/renderer/layers/terrain_layer_tweaker.hpp>
 #include <mln/util/tile_cover.hpp>
+#include <mln/util/projection.hpp>
+#include <mln/math/log2.hpp>
+#include <algorithm>
+#include <cmath>
 
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/mtl/renderer_backend.hpp>
@@ -787,14 +791,31 @@ std::shared_ptr<UpdateParameters> Renderer::Impl::withCenterOnGround(
     TransformState& liftedState = lifted->transformState;
     liftedState.setCenterAltitude(*lastCenterGround);
 
-    // The eye can still be below the ground under it where the terrain behind rises faster
-    // than the view drops towards the centre - a steep slope at the rider's back. Raise the
-    // whole view until the eye clears it, as GL JS's _elevateCameraIfInsideTerrain does.
+    // The eye can still be inside the ground under it where the terrain behind rises faster than
+    // the view drops towards the centre: a slope at the rider's back, a valley wall. As GL JS's
+    // _elevateCameraIfInsideTerrain does, the eye then rises above the ground where it stands and
+    // the view turns down onto the same centre - steeper and a little further out - so the rider
+    // stays where the screen expects them. Lifting the whole view instead left the centre in mid
+    // air and the road out of frame: a blank map in a valley, and flicker wherever the slope
+    // brushed the margin.
     if (const auto eye = liftedState.getFreeCameraOptions().getLocation()) {
         if (const auto groundUnderEye = terrain->queryElevationForLatLng(eye->location)) {
-            const double clearance = eye->altitude - *groundUnderEye;
-            if (clearance < minimumEyeClearanceMeters) {
-                liftedState.setCenterAltitude(*lastCenterGround + minimumEyeClearanceMeters - clearance);
+            const LatLng center = liftedState.getLatLng();
+            const double zoom = liftedState.getZoom();
+            const double distance = liftedState.getCameraToCenterDistance() *
+                                    Projection::getMetersPerPixelAtLatitude(center.latitude(), zoom);
+            const double pitch = liftedState.getPitch();
+            const double height = distance * std::cos(pitch); // eye above the centre
+            const double reach = distance * std::sin(pitch);  // eye behind the centre
+            const double margin = std::clamp(
+                height * eyeClearanceFraction, minimumEyeClearanceMeters, maximumEyeClearanceMeters);
+            const double neededHeight = *groundUnderEye + margin - *lastCenterGround;
+            if (neededHeight > height && distance > 0.0) {
+                const double raisedDistance = std::hypot(reach, neededHeight);
+                liftedState.setPitch(std::atan2(reach, neededHeight));
+                liftedState.setLatLngZoom(center, zoom - util::log2(raisedDistance / distance));
+                // The altitude is kept in pixels at the zoom, so it is set again at the new one.
+                liftedState.setCenterAltitude(*lastCenterGround);
             }
         }
     }

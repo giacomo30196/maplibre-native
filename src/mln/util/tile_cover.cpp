@@ -244,12 +244,15 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     const double requestedCenterZoom = transform.getZoom() + (unclampedZ - std::floor(transform.getZoom()));
     const util::TileZoomFunction tileZoom(util::rad2deg(transform.getFieldOfView()));
 
-    // Elevation has to reach the frustum in the aabb's units (tiles at zoom z).
-    // Renderable heights are in meters and Camera::getWorldToCamera scales them by
-    // pixelsPerMeter = worldSize / (cos(lat) * 2pi * R); pixels are then tiles at
-    // zoom z scaled by numTiles / worldSize, so worldSize cancels out.
-    const double metersToTileUnits = numTiles / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
-                                                 util::M2PI * util::EARTH_RADIUS_M);
+    // Elevation has to reach the frustum in the units its corners come out in. The projection
+    // takes heights in meters (Camera::getWorldToCamera scales z by pixelsPerMeter itself), so
+    // its inverse hands z back in meters, and Frustum::fromInvProjMatrix then scales every
+    // component, z included, by numTiles / worldSize. Heights must take the same factor.
+    // Converting them as ground distance instead (numTiles / (cos(lat) * 2pi * R)) agreed only
+    // at the zoom where a pixel is a meter, ~15.7 at 46°N, and drifted 2x per zoom from it:
+    // with the camera on 266 m ground at zoom 17 every tile fell outside, and the map went
+    // blank or flickered.
+    const double metersToTileUnits = numTiles / worldSize;
 
     // The tile's bounds including its terrain: the flat footprint given the height of
     // the DEM covering it. Relief rising towards the camera takes up screen space that
@@ -262,13 +265,23 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     // decide what is visible, not how finely it is subdivided. It also keeps this
     // change from perturbing tile selection on maps that have no terrain-shaped reason
     // to change.
+    // The ground the view stands on (a renderer lifting the centre onto terrain puts it there).
+    const double groundAltitudeTileUnits = transform.getGroundAltitude() * metersToTileUnits;
     const auto elevatedAABB = [&](const Node& node) -> AABB {
         if (!state.elevationProvider) {
             return node.aabb;
         }
         const auto range = state.elevationProvider->getTileElevationRange(CanonicalTileID(node.zoom, node.x, node.y));
         if (!range) {
-            return node.aabb; // no DEM loaded here yet: flat, as before
+            // No DEM loaded at all yet: the ground is where the view is anchored. Sea level
+            // there culled every tile once a camera stood on high ground - and the empty cover
+            // dropped the DEM, which brought the cover back, and the tiles flickered.
+            if (groundAltitudeTileUnits == 0.0) {
+                return node.aabb;
+            }
+            AABB grounded = node.aabb;
+            grounded.min[2] = grounded.max[2] = groundAltitudeTileUnits;
+            return grounded;
         }
         AABB elevated = node.aabb;
         elevated.min[2] = range->min * metersToTileUnits;
@@ -419,9 +432,8 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
     const double numTiles = std::exp2(static_cast<double>(refZ));
     const double worldSize = Projection::worldSize(transform.getScale());
     const Frustum frustum = Frustum::fromInvProjMatrix(transform.getInvProjectionMatrix(), worldSize, refZ, flippedY);
-    // Meters to tile-units at refZ; see the same conversion in tileCover.
-    const double metersToTileUnits = numTiles / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
-                                                 util::M2PI * util::EARTH_RADIUS_M);
+    // Meters to the frustum's units at refZ; see the same conversion in tileCover.
+    const double metersToTileUnits = numTiles / worldSize;
 
     std::set<UnwrappedTileID> result;
     for (const auto& id : tiles) {
@@ -434,6 +446,9 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
             if (const auto range = state.elevationProvider->getTileElevationRange(id.canonical)) {
                 aabb.min[2] = range->min * metersToTileUnits;
                 aabb.max[2] = range->max * metersToTileUnits;
+            } else {
+                // No DEM loaded at all yet: the ground is where the view is anchored (see tileCover).
+                aabb.min[2] = aabb.max[2] = transform.getGroundAltitude() * metersToTileUnits;
             }
         }
 
