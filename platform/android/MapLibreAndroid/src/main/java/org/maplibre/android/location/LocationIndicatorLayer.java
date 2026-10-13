@@ -23,7 +23,7 @@ import org.maplibre.android.style.layers.PropertyValue;
  * @see <a href="https://maplibre.org/maplibre-style-spec/#layers-location-indicator">The online documentation</a>
  */
 @UiThread
-class LocationIndicatorLayer extends Layer {
+public class LocationIndicatorLayer extends Layer {
 
   /**
    * Creates a LocationIndicatorLayer.

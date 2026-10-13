@@ -22,6 +22,7 @@ class LineAtlas;
 class PropertyEvaluationParameters;
 class PaintParameters;
 class PatternAtlas;
+class RenderTerrain;
 class RenderTile;
 class RenderTree;
 class SymbolBucket;
@@ -81,6 +82,8 @@ public:
     PatternAtlas& patternAtlas;
     LineAtlas& lineAtlas;
     const TransformState& state;
+    // The 3D terrain when it is drawn, for layers that stand something on the ground.
+    const RenderTerrain* terrain = nullptr;
 };
 
 class RenderLayer {

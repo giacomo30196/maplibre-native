@@ -5,6 +5,8 @@
 #include <mln/style/layers/location_indicator_layer_impl.hpp>
 #include <mln/style/layers/location_indicator_layer_properties.hpp>
 
+#include <optional>
+
 #if !MLN_RENDER_BACKEND_OPENGL
 #define MLN_DRAWABLE_LOCATION_INDICATOR
 #endif
@@ -53,6 +55,7 @@ private:
     bool contextDestroyed = false;
     std::unique_ptr<RenderLocationIndicatorImpl> renderImpl;
     style::LocationIndicatorPaintProperties::Unevaluated unevaluated;
+    std::optional<double> lastPuckGround;
 
 #ifdef MLN_DRAWABLE_LOCATION_INDICATOR
     // Drawable shaders

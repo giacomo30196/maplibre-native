@@ -17,7 +17,7 @@ import org.maplibre.android.style.layers.PropertyValue;
  *
  * @see <a href="https://maplibre.org/maplibre-style-spec/#layers">Layer style documentation</a>
  */
-class LocationPropertyFactory {
+public class LocationPropertyFactory {
 
   /**
    * Set the property visibility.

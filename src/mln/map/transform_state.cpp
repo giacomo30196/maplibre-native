@@ -778,7 +778,8 @@ ScreenCoordinate TransformState::latLngToScreenCoordinate(const LatLng& latLng, 
     }
 
     Point<double> pt = Projection::project(latLng, scale) / util::tileSize_D;
-    vec4 c = {{pt.x, pt.y, 0, 1}};
+    // On the ground plane, as screenCoordinateToTileCoordinate unprojects onto (z in meters).
+    vec4 c = {{pt.x, pt.y, groundAltitude, 1}};
     matrix::transformMat4(p, c, getCoordMatrix());
     return {p[0] / p[3], size.height - p[1] / p[3]};
 }

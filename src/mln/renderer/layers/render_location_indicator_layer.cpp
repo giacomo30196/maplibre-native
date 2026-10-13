@@ -20,6 +20,7 @@
 #include <mln/renderer/bucket.hpp>
 #include <mln/renderer/layers/render_location_indicator_layer.hpp>
 #include <mln/renderer/paint_parameters.hpp>
+#include <mln/renderer/render_terrain.hpp>
 #include <mln/style/layers/location_indicator_layer.hpp>
 #include <mln/style/layers/location_indicator_layer_impl.hpp>
 #include <mln/style/layers/location_indicator_layer_properties.hpp>
@@ -83,6 +84,8 @@ struct LocationIndicatorRenderParameters {
     // some testing defaults, for before it gets updated via props
     double puckBearing = 0.0;
     LatLng puckPosition = {0, 0};
+    // Meters above sea level, where the puck stands: the terrain under it.
+    double puckAltitude = 0.0;
     double errorRadiusMeters;
     mln::Color errorRadiusColor{0, 0, 0, 0};
     mln::Color errorRadiusBorderColor{0, 0, 0, 0};
@@ -503,6 +506,7 @@ public:
 
     void updatePuckGeometry(const mln::LocationIndicatorRenderParameters& params) {
         if (params.projectionMatrix != oldParams.projectionMatrix) positionChanged = true;
+        if (params.puckAltitude != oldParams.puckAltitude) positionChanged = true;
         if (params.puckPosition != oldParams.puckPosition) {
             positionChanged = true;
             ruler = mapbox::cheap_ruler::CheapRuler(params.puckPosition.latitude(),
@@ -527,7 +531,9 @@ public:
         projectionCircle = params.projectionMatrix;
         const Point<double> positionMercator = project(params.puckPosition, *params.state);
         matrix::identity(translation);
-        matrix::translate(translation, translation, positionMercator.x, positionMercator.y, 0.0);
+        // World z is in meters: on the terrain the puck sits on the road, not hundreds of meters
+        // below it where the drape hides it.
+        matrix::translate(translation, translation, positionMercator.x, positionMercator.y, params.puckAltitude);
         matrix::multiply(projectionCircle, projectionCircle, translation);
 
         if (positionChanged) {
@@ -1007,6 +1013,19 @@ void RenderLocationIndicatorLayer::prepare(const LayerPrepareParameters& p) {
     state.getProjMatrix(projMatrix);
     renderImpl->parameters.projectionMatrix = projMatrix;
 
+    // On the terrain under the puck. Where its DEM tile is still loading, the last height holds
+    // rather than the puck dropping to sea level and popping back; with nothing yet, the ground
+    // the view stands on.
+    std::optional<double> ground;
+    if (p.terrain) {
+        ground = p.terrain->queryElevationForLatLng(renderImpl->parameters.puckPosition);
+        if (ground) lastPuckGround = ground;
+        else ground = lastPuckGround;
+    } else {
+        lastPuckGround.reset();
+    }
+    renderImpl->parameters.puckAltitude = ground.value_or(state.getGroundAltitude());
+
     renderImpl->updatePuckGeometry(renderImpl->parameters);
 }
 
@@ -1021,7 +1040,9 @@ void RenderLocationIndicatorLayer::render(PaintParameters& paintParameters) {
 
     // Reset GL state to a known state so the CustomLayer always has a clean slate.
     glContext.bindVertexArray = 0;
-    glContext.setDepthMode(paintParameters.depthModeForSublayer(0, gfx::DepthMaskType::ReadOnly));
+    // Over everything, as the drawable path draws it: on 3D terrain the ground's depth, written
+    // just before at the puck's own height, would hide it.
+    glContext.setDepthMode(gfx::DepthMode::disabled());
     glContext.setStencilMode(gfx::StencilMode::disabled());
     glContext.setColorMode(paintParameters.colorModeForRenderPass()); // this is gfx::ColorMode::alphaBlended()
     glContext.setCullFaceMode(gfx::CullFaceMode::disabled());
