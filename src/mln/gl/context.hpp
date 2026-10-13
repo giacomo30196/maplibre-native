@@ -19,10 +19,13 @@
 #include <mln/gl/fence.hpp>
 #include <mln/gl/buffer_allocator.hpp>
 #include <mln/gfx/texture2d.hpp>
+#include <mln/gfx/renderbuffer.hpp>
 #include <mln/gl/uniform_buffer_gl.hpp>
 
 #include <array>
 #include <functional>
+#include <map>
+#include <memory>
 #include <vector>
 
 namespace mln {
@@ -261,6 +264,19 @@ public:
 private:
     std::unique_ptr<gfx::RenderbufferResource> createRenderbufferResource(gfx::RenderbufferPixelType,
                                                                           Size size) override;
+
+public:
+    using DepthStencilRenderbuffer = gfx::Renderbuffer<gfx::RenderbufferPixelType::DepthStencil>;
+    /// The depth-stencil buffer every offscreen texture of this size that asks for one draws with.
+    /// Those are the terrain drape targets: each is cleared and drawn start to finish before the
+    /// next, and only its colour is kept, so one buffer serves them all, as gl-js's terrain
+    /// render-to-texture shares one. A buffer per target was 4 MB per draped tile, and the Mali
+    /// driver kept that memory after the buffer was deleted, so it grew with every tile the view
+    /// passed: 0.9 to 1.6 GB in three minutes of riding.
+    std::shared_ptr<DepthStencilRenderbuffer> getSharedDepthStencilRenderbuffer(Size size);
+
+private:
+    std::map<std::pair<uint32_t, uint32_t>, std::weak_ptr<DepthStencilRenderbuffer>> sharedDepthStencilRenderbuffers;
 
     std::unique_ptr<gfx::DrawScopeResource> createDrawScopeResource() override;
 

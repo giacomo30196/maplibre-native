@@ -319,6 +319,17 @@ std::unique_ptr<gfx::RenderbufferResource> Context::createRenderbufferResource(c
     return std::make_unique<gl::RenderbufferResource>(std::move(renderbuffer));
 }
 
+std::shared_ptr<Context::DepthStencilRenderbuffer> Context::getSharedDepthStencilRenderbuffer(const Size size) {
+    auto& slot = sharedDepthStencilRenderbuffers[{size.width, size.height}];
+    if (auto existing = slot.lock()) {
+        return existing;
+    }
+    auto renderbuffer = std::make_shared<DepthStencilRenderbuffer>(
+        createRenderbuffer<gfx::RenderbufferPixelType::DepthStencil>(size));
+    slot = renderbuffer;
+    return renderbuffer;
+}
+
 std::unique_ptr<uint8_t[]> Context::readFramebuffer(const Size size,
                                                     const gfx::TexturePixelType format,
                                                     const bool flip) {

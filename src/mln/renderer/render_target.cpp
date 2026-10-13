@@ -99,6 +99,12 @@ void RenderTarget::setDrapeTileID(const UnwrappedTileID& id) {
                        1.0f};
 }
 
+void RenderTarget::resetDrapeContent() {
+    bakedCoverage = {};
+    bakedSignature.reset();
+    hasRenderedContent = false;
+}
+
 void RenderTarget::updateDrapeGlobalUBO(const shaders::GlobalPaintParamsUBO& params, gfx::Context& context_) {
     if (!drapeTileID) {
         return;

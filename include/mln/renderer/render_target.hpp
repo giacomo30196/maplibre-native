@@ -48,6 +48,10 @@ public:
     /// Drape targets render the orchestrator's draped tile layer groups
     /// (filtered to overlapping tiles) instead of their own layer groups.
     void setDrapeTileID(const UnwrappedTileID& id);
+
+    /// Forget what this drape target last rendered, so that, handed to another tile, it renders
+    /// afresh before it is shown rather than keeping (or deferring with) the old tile's image.
+    void resetDrapeContent();
     const std::optional<UnwrappedTileID>& getDrapeTileID() const { return drapeTileID; }
 
     /// Refresh this drape target's copy of the global paint parameters,
