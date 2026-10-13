@@ -51,11 +51,11 @@ enum class TileLodMode : uint8_t {
 
 /// Controls progressive loading of 3D-terrain content (draped tiles and drape
 /// re-renders). It trades initial-load sharpness for smoother interaction on weaker
-/// GPUs, so it is a per-map, hardware-driven choice. Default is Quality (no budget),
-/// which preserves the historical sharp snap-load behaviour.
+/// GPUs, so it is a per-map, hardware-driven choice. Quality has no count limit;
+/// continuous maps also bound redraw time when a target already has an image.
 enum class TerrainLoadMode : uint8_t {
-    Quality,     ///< No budget: all revealed tiles/drapes build immediately. Sharp, may
-                 ///< stall a frame on big bursts (zoom-in over new coverage). Default.
+    Quality,     ///< No tile-build or drape count limit; cached drape images allow the
+                 ///< common redraw deadline to spread texture updates over frames. Default.
     Balanced,    ///< Cap 32 new-tile builds + 16 drape re-renders per frame.
     Performance, ///< Cap 8 new-tile builds + 4 drape re-renders per frame; smoothest on
                  ///< weak GPUs, most progressive fill-in.

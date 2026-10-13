@@ -16,6 +16,12 @@
 
 #include <cmath>
 
+#if MLN_RENDER_BACKEND_OPENGL
+#include <mln/gl/context.hpp>
+#include <mln/gl/defines.hpp>
+#include <mln/gl/renderable_resource.hpp>
+#endif
+
 namespace mln {
 
 // TEMP Stage-2 diagnostic: per-frame count of drape targets (re-)rendered vs skipped (cache
@@ -103,6 +109,50 @@ void RenderTarget::resetDrapeContent() {
     bakedCoverage = {};
     bakedSignature.reset();
     hasRenderedContent = false;
+}
+
+bool RenderTarget::seedDrapeFrom(const RenderTarget& parent) {
+#if MLN_RENDER_BACKEND_OPENGL
+    if (hasRenderedContent || !drapeTileID || !parent.drapeTileID || !parent.hasRenderedContent ||
+        !drapeTileID->isChildOf(*parent.drapeTileID)) {
+        return false;
+    }
+    const auto& childID = drapeTileID->canonical;
+    const auto& parentID = parent.drapeTileID->canonical;
+    if (childID.z <= parentID.z || childID.z - parentID.z >= 32) {
+        return false;
+    }
+    const uint32_t scale = 1u << (childID.z - parentID.z);
+    const auto sourceSize = parent.offscreenTexture->getSize();
+    const auto targetSize = offscreenTexture->getSize();
+    if (scale > sourceSize.width || scale > sourceSize.height ||
+        sourceSize.width % scale != 0 || sourceSize.height % scale != 0) {
+        return false;
+    }
+    const uint32_t width = sourceSize.width / scale;
+    const uint32_t height = sourceSize.height / scale;
+    const uint32_t x = (childID.x - parentID.x * scale) * width;
+    // Tile coordinates point down; framebuffer coordinates point up.
+    const uint32_t y = sourceSize.height - (childID.y - parentID.y * scale + 1) * height;
+    auto& glContext = static_cast<gl::Context&>(context);
+    const auto previousFramebuffer = glContext.bindFramebuffer.getCurrentValue();
+    parent.offscreenTexture->getResource<gl::RenderableResource>().bind();
+    const auto sourceFramebuffer = glContext.bindFramebuffer.getCurrentValue();
+    offscreenTexture->getResource<gl::RenderableResource>().bind();
+    MBGL_CHECK_ERROR(platform::glBindFramebuffer(GL_READ_FRAMEBUFFER, sourceFramebuffer));
+    MBGL_CHECK_ERROR(platform::glBlitFramebuffer(x, y, x + width, y + height,
+                                                0, 0, targetSize.width, targetSize.height,
+                                                GL_COLOR_BUFFER_BIT, GL_LINEAR));
+    // The state cache tracks a combined read/draw binding. Restore both after the split bind.
+    glContext.bindFramebuffer.setDirty();
+    glContext.bindFramebuffer = previousFramebuffer;
+    hasRenderedContent = true;
+    // Do not mark coverage/signature as baked: this is only a temporary, coarser image.
+    return true;
+#else
+    (void)parent;
+    return false;
+#endif
 }
 
 void RenderTarget::updateDrapeGlobalUBO(const shaders::GlobalPaintParamsUBO& params, gfx::Context& context_) {
@@ -355,8 +405,8 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // exhausted (canRerender == false) and it already has a baked texture, defer to a
         // later frame - keep showing the slightly stale texture instead of stalling the
         // frame. Leave bakedCoverage/bakedSignature unchanged so it is re-evaluated and
-        // rendered on a subsequent frame. A never-rendered target falls through (rendering
-        // it now avoids a blank tile), so bursts of *new* targets are not deferred.
+        // rendered on a subsequent frame. A new target seeded from its parent can defer
+        // too; one with no image falls through so it never shows a blank tile.
         if (!canRerender && hasRenderedContent) {
             return RenderResult::Deferred;
         }

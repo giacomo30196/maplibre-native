@@ -35,6 +35,19 @@ void TexturePool::createRenderTarget(gfx::Context& context, const UnwrappedTileI
     }
     renderTarget->setClearColor(backgroundColor);
     renderTarget->setDrapeTileID(id);
+    // The previous cover is still alive here. On zoom-in, its parent can supply a complete
+    // temporary image, letting new children obey the redraw budget instead of all drawing
+    // the entire style in the same frame. A missing parent keeps the immediate-render path.
+    std::shared_ptr<RenderTarget> parent;
+    for (const auto& [tileID, candidate] : renderTargets) {
+        if (candidate->hasDrapeContent() && id.isChildOf(tileID) &&
+            (!parent || tileID.canonical.z > parent->getDrapeTileID()->canonical.z)) {
+            parent = candidate;
+        }
+    }
+    if (parent) {
+        renderTarget->seedDrapeFrom(*parent);
+    }
     renderTargets[id] = std::move(renderTarget);
 }
 

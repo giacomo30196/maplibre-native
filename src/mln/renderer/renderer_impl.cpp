@@ -581,14 +581,21 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // burst of dirty targets (tilt/pan changing coverage) otherwise stalls one frame for
         // tens of ms each; instead render up to the budget and defer the rest (they keep their
         // stale texture), requesting a follow-up frame so they catch up progressively.
-        // Never-rendered targets always render (avoid blank tiles). The cap comes from the
-        // map's TerrainLoadMode; Quality (default) is unlimited.
+        // Targets with no image always render to avoid holes. TerrainLoadMode supplies a
+        // count limit; Quality has no count limit but still uses the continuous-map deadline.
         const int drapeCap = terrainLoadBudget(updateParameters->terrainLoadMode).drapeRerendersPerFrame;
         int drapeBudget = drapeCap > 0 ? drapeCap : (1 << 30);
+        // Zoom boundaries invalidate many textures together. Reuse their previous image
+        // (or a crop of the parent on zoom-in) while refreshing within a 4 ms budget.
+        // This is a soft limit: targets without an image must still draw immediately.
+        // Static snapshots must complete without needing another display frame.
+        const auto drapeDeadline = util::MonotonicTimer::now().count() + 0.004;
         orchestrator.visitRenderTargets([&](RenderTarget& renderTarget) {
             if (renderTarget.getDrapeTileID()) {
+                const bool withinDeadline = updateParameters->mode != MapMode::Continuous ||
+                                            util::MonotonicTimer::now().count() < drapeDeadline;
                 const auto res = renderTarget.render(
-                    orchestrator, renderTree, parameters, /*canRerender=*/drapeBudget > 0);
+                    orchestrator, renderTree, parameters, /*canRerender=*/drapeBudget > 0 && withinDeadline);
                 if (res == RenderTarget::RenderResult::Rendered) {
                     --drapeBudget;
                 } else if (res == RenderTarget::RenderResult::Deferred) {

@@ -49,9 +49,13 @@ public:
     /// (filtered to overlapping tiles) instead of their own layer groups.
     void setDrapeTileID(const UnwrappedTileID& id);
 
-    /// Forget what this drape target last rendered, so that, handed to another tile, it renders
-    /// afresh before it is shown rather than keeping (or deferring with) the old tile's image.
+    /// Forget the previous tile's image. A reused target must be rendered or seeded from
+    /// its new parent's texture before it can be shown or deferred.
     void resetDrapeContent();
+    bool hasDrapeContent() const { return hasRenderedContent; }
+    /// Seed a new child with its parent's image so a full redraw can be deferred safely.
+    /// Returns false when the backend cannot copy it or the source is not usable.
+    bool seedDrapeFrom(const RenderTarget& parent);
     const std::optional<UnwrappedTileID>& getDrapeTileID() const { return drapeTileID; }
 
     /// Refresh this drape target's copy of the global paint parameters,
@@ -181,9 +185,9 @@ protected:
     bool renderOnce = false;
     // Whether a render-once target has already produced its texture.
     bool renderedOnce = false;
-    // Whether this drape target has been rendered at least once, so its offscreen texture
-    // holds valid (if stale) content. Only such targets may be deferred by the drape budget;
-    // a never-rendered target is always rendered to avoid showing a blank tile.
+    // Whether this target holds a rendered image or a copy from its parent. Only targets
+    // with valid (if stale/coarser) content may be deferred by the drape budget; an empty
+    // target must render immediately to avoid showing a blank tile.
     bool hasRenderedContent = false;
 
 public:
