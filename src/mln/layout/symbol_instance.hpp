@@ -9,7 +9,14 @@
 #include <cstdint>
 
 #ifndef MLN_SYMBOL_GUARDS
+// Guard values (28 per symbol, verified on every access) catch memory corruption while
+// developing. A release build leaves them out: on a pitched street view they took ~38% of the
+// render thread on a Helio P60, about half the frame.
+#ifdef NDEBUG
+#define MLN_SYMBOL_GUARDS 0
+#else
 #define MLN_SYMBOL_GUARDS 1
+#endif
 #endif
 
 #if MLN_SYMBOL_GUARDS
