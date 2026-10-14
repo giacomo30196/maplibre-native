@@ -714,9 +714,10 @@ final class MapGestureDetector {
       double speed = deltaSinceLast / (currTime - prevTime);
       float deltaSinceStart = Math.abs(detector.getDeltaSinceStart());
 
-      // adjust the responsiveness of a rotation gesture - the higher the speed, the bigger the threshold
-      if (speed < 0.04
-        || (speed > 0.07 && deltaSinceStart < 5)
+      // The detector already requires 3 degrees of deliberate movement. A minimum
+      // angular speed rejects slow, precise twists indefinitely; keep only the
+      // larger displacement guards for fast gestures.
+      if ((speed > 0.07 && deltaSinceStart < 5)
         || (speed > 0.15 && deltaSinceStart < 7)
         || (speed > 0.5 && deltaSinceStart < 15)
       ) {
