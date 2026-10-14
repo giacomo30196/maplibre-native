@@ -44,7 +44,8 @@ private:
 
     std::map<UnwrappedTileID, std::shared_ptr<RenderTarget>> renderTargets;
 
-    // Targets whose tile left the cover, handed to the next tiles that join it. Riding at
+    // Targets whose tile left the cover, oldest first. Returning tiles reuse their
+    // image; new tiles recycle the oldest target no longer referenced by a frame. Riding at
     // 50 km/h tiles leave and join the cover several times a second (the same tile often
     // comes back), and a target created for each, deleted when it left, grew GPU memory
     // without bound: the Mali G72 driver kept what the deleted framebuffers and depth

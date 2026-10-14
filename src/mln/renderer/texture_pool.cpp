@@ -15,15 +15,27 @@ void TexturePool::createRenderTarget(gfx::Context& context, const UnwrappedTileI
         it->second->setClearColor(backgroundColor);
         return;
     }
-    // A spare only once nothing else holds it or its texture: the orchestrator's target list and
-    // the terrain drawable of the tile it last served let go of it the frame after it left.
+    // A turn commonly reveals the same tiles again. Keep their image and signature
+    // while they are spare so returning tiles do not rebake the entire style.
     std::shared_ptr<RenderTarget> renderTarget;
-    while (!renderTarget && !spareRenderTargets.empty()) {
-        auto spare = std::move(spareRenderTargets.back());
-        spareRenderTargets.pop_back();
-        if (spare.use_count() == 1 && spare->getTexture().use_count() == 1) {
-            renderTarget = std::move(spare);
+    for (auto it = spareRenderTargets.begin(); it != spareRenderTargets.end(); ++it) {
+        if ((*it)->getDrapeTileID() == id) {
+            renderTarget = std::move(*it);
+            spareRenderTargets.erase(it);
+            renderTarget->setClearColor(backgroundColor);
+            renderTargets[id] = std::move(renderTarget);
+            return;
+        }
+    }
+    // Recycle the oldest available spare. A target still used by the previous
+    // frame must stay in the pool until those references expire; discarding it
+    // here caused allocation churn whenever the cover changed on adjacent frames.
+    for (auto it = spareRenderTargets.begin(); it != spareRenderTargets.end(); ++it) {
+        if (it->use_count() == 1 && (*it)->getTexture().use_count() == 1) {
+            renderTarget = std::move(*it);
+            spareRenderTargets.erase(it);
             renderTarget->resetDrapeContent();
+            break;
         }
     }
     if (!renderTarget) {
@@ -54,7 +66,10 @@ void TexturePool::createRenderTarget(gfx::Context& context, const UnwrappedTileI
 void TexturePool::removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles) {
     for (auto it = renderTargets.begin(); it != renderTargets.end();) {
         if (!currentTiles.contains(it->first)) {
-            if (!currentTiles.empty() && spareRenderTargets.size() < maxSpareRenderTargets) {
+            if (!currentTiles.empty()) {
+                if (spareRenderTargets.size() == maxSpareRenderTargets) {
+                    spareRenderTargets.erase(spareRenderTargets.begin());
+                }
                 spareRenderTargets.push_back(std::move(it->second));
             }
             it = renderTargets.erase(it);
